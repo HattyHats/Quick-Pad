@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0">
+    <title>QuickPad</title>
+    <meta name="description" content="A serverless, real-time scratchpad. No logins, no friction. Zero-knowledge end-to-end encryption. Sync instantly across all your devices.">
+    <meta property="og:title" content="QuickPad">
+    <meta property="og:description" content="A serverless, real-time scratchpad. No logins, no friction. Zero-knowledge end-to-end encryption.">
+    <meta property="og:type" content="website">
+    <meta name="twitter:card" content="summary_large_image">
+    <!-- PWA Setup -->
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#000000">
+    <link rel="apple-touch-icon" href="icon.png">
+    
+    <link rel="stylesheet" href="style.css?v=6">
+    <!-- marked.js for markdown rendering -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+
+    <!-- Highlight.js for code syntax highlighting -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <!-- CryptoJS for client-side encryption -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+    <!-- DOMPurify to prevent Markdown XSS -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.5/purify.min.js"></script>
+</head>
+<body>
+    <div id="splash-screen">
+        <div id="splash-bg"></div>
+        <div class="splash-content">
+            <h1 class="glitch-text" data-text="Quick-Pad">Quick-Pad</h1>
+            <p class="glitch-subtext" data-text="Created by HattyHats">Created by HattyHats</p>
+            <div class="splash-instructions">
+                A serverless, real-time scratchpad. No logins. No friction. <br>
+                Share your unique URL to sync across devices instantly. <br>
+                Or generate a "Burn Link" to self-destruct secrets forever.
+            </div>
+            <div id="splash-spinner-container">
+                <div class="splash-spinner"></div>
+                <div class="splash-loading-text">LOADING SYSTEM...</div>
+            </div>
+        </div>
+    </div>
+    <canvas id="matrix-canvas"></canvas>
+    <div id="loader" class="loader">Syncing...</div>
+    <div id="typing-indicator" class="typing-indicator hidden">Someone is typing...</div>
+    <!-- Tabs Bar -->
+    <div id="tabs-bar" class="hidden">
+        <div id="tabs-container" style="display:flex;gap:5px;"></div>
+        <button id="add-tab-btn" title="Add Tab">+</button>
+    </div>
+
+    <!-- Action Bar -->
+    <div class="action-bar">
+        <div id="theme-picker" class="btn" title="Change Theme">
+            🎨
+            <div id="theme-menu">
+                <div class="theme-btn" style="background:#00fff9" data-theme=""></div>
+                <div class="theme-btn" style="background:#00ff00" data-theme="theme-matrix"></div>
+                <div class="theme-btn" style="background:#ff003c" data-theme="theme-red"></div>
+                <div class="theme-btn" style="background:#b026ff" data-theme="theme-purple"></div>
+                <div class="theme-btn" style="background:#ffb000" data-theme="theme-amber"></div>
+            </div>
+        </div>
+        <div id="screensaver-picker" class="btn" title="Screensaver Settings">
+            🌧️ <span id="ss-label">2m</span>
+            <div id="screensaver-menu">
+                <div class="ss-btn" data-time="0">Off</div>
+                <div class="ss-btn" data-time="2">2m</div>
+                <div class="ss-btn" data-time="5">5m</div>
+                <div class="ss-btn" data-time="15">15m</div>
+                <div class="ss-btn" data-time="30">30m</div>
+            </div>
+        </div>
+        <button id="name-btn" class="btn" title="Set Username">👤 Name</button>
+        <button id="qr-btn" class="btn" title="Show QR Code">📱 QR</button>
+        <button id="zen-btn" class="btn" title="Toggle Zen Mode">🧘 Zen</button>
+        <button id="share-btn" class="btn" title="Share Read-Only or Editor Link">🔗 Share</button>
+        <button id="new-btn" class="btn" title="Create New Workspace">✨ New</button>
+        <button id="copy-btn" class="btn" title="Copy to Clipboard">📋 Copy</button>
+        <button id="md-toggle-btn" class="btn" title="Toggle Markdown">👁️ Markdown</button>
+
+        <button id="timer-btn" class="btn burn" title="Set Auto-Destruct Timer">⏳ Timer</button>
+        <button id="burn-btn" class="btn burn" title="Create Burn-after-Reading Link">🔥 Burn Link</button>
+        <button id="info-btn" class="btn" title="About QuickPad">ℹ️ Info</button>
+        <a href="https://cash.app/$hattyhatss" target="_blank" class="btn" style="text-decoration: none; display: flex; align-items: center; justify-content: center;" title="Support the creator">💸 Donate</a>
+    </div>
+    <textarea id="editor" placeholder="Start typing... Everything auto-saves." autofocus></textarea>
+    <div id="preview" class="markdown-body hidden"></div>
+    <div id="editor-mirror"></div>
+    <div id="cursors-container"></div>
+    
+    <div id="live-hud" class="hidden">
+        <div><span id="hud-chars">0</span>c</div>
+        <div><span id="hud-words">0</span>w</div>
+        <div><span id="hud-read">0</span>m read</div>
+    </div>
+
+    <!-- Live Presence UI -->
+    <div id="live-presence" class="hidden">
+        👥 <span id="presence-list"></span>
+    </div>
+
+    <!-- Direct Messaging UI -->
+    <div id="dm-window" class="hidden">
+        <div class="dm-header">
+            <span id="dm-title" style="font-family: monospace; font-weight: bold; color: var(--primary-color);">Secure Chat</span>
+            <span id="close-dm" class="close" style="position: static; font-size: 1.2rem; line-height: 1;">&times;</span>
+        </div>
+        <div id="dm-messages"></div>
+        <div class="dm-input-area">
+            <input type="text" id="dm-input" placeholder="Encrypted message...">
+            <button id="dm-send" class="btn glowing-btn" style="padding: 5px 10px; font-size: 0.9rem;">Send</button>
+        </div>
+    </div>
+
+    <!-- QR Code Modal -->
+    <div id="qr-modal" class="modal hidden">
+        <div class="modal-content">
+            <span id="close-qr" class="close">&times;</span>
+            <h2 class="glitch-text" data-text="SCAN ME" style="font-size: 2rem; margin-bottom: 20px;">SCAN ME</h2>
+            <p style="margin-bottom: 20px; color: #a0aec0; font-family: monospace;">Point your camera here to instantly open this pad on your phone.</p>
+            <img id="qr-code-img" src="" alt="QR Code" style="border: 5px solid #fff; border-radius: 10px; width: 200px; height: 200px;">
+        </div>
+    </div>
+
+    <!-- Info Modal -->
+    <div id="info-modal" class="modal hidden">
+        <div class="modal-content" style="text-align: left; max-width: 600px; max-height: 85vh; overflow-y: auto; padding: 25px;">
+            <span id="close-info" class="close">&times;</span>
+            <h2 class="glitch-text" data-text="Quick-Pad" style="font-size: 1.5rem; margin-bottom: 5px; text-align: center;">Quick-Pad</h2>
+            <p style="color: var(--primary-color); font-family: monospace; font-size: 0.8rem; text-align: center; margin-bottom: 15px;">Created by HattyHats</p>
+            
+            <p style="margin-bottom: 12px; line-height: 1.4; font-size: 0.9rem;">QuickPad is a hyper-fast, serverless scratchpad that syncs instantly across your devices. It was built to eliminate the friction of modern note-taking: <strong>no logins, no paywalls, and no data harvesting.</strong> You just open the link and type.</p>
+            
+            <p style="margin-bottom: 8px; font-weight: bold; font-size: 0.95rem; color: var(--primary-color);">Core Features:</p>
+            <ul style="margin-left: 20px; line-height: 1.4; font-size: 0.85rem; margin-bottom: 15px;">
+                <li style="margin-bottom: 4px;">🥷 <strong>Zero-Knowledge URLs:</strong> Invisible AES-256 encryption keys are built right into the URL hash. The server only ever sees scrambled ciphertext.</li>
+                <li style="margin-bottom: 4px;">🔗 <strong>Read-Only Links:</strong> Share a special `?view=` link that allows friends to watch you type live but disables their ability to edit.</li>
+                <li style="margin-bottom: 4px;">🧘 <strong>Zen Mode:</strong> Hide all distractions and menus for a 100% full-screen writing environment.</li>
+                <li style="margin-bottom: 4px;">⚡ <strong>Instant Sync:</strong> Share your URL to collaborate in real-time.</li>
+                <li style="margin-bottom: 4px;">💬 <strong>Secure DMs:</strong> True RSA-encrypted direct messaging. Click a name to chat!</li>
+                <li style="margin-bottom: 4px;">🌧️ <strong>Matrix Screensaver:</strong> Customizable idle animation engine.</li>
+                <li style="margin-bottom: 4px;">🔥 <strong>Burn Notes:</strong> Create self-destructing links that erase forever after reading.</li>
+                <li style="margin-bottom: 4px;">📴 <strong>True Offline Mode:</strong> Keep typing without Wi-Fi. Syncs intelligently when back online.</li>
+            </ul>
+            
+            <p style="margin-bottom: 8px; font-weight: bold; font-size: 0.95rem; color: #ff003c;">Privacy & Security Architecture:</p>
+            <p style="margin-bottom: 15px; line-height: 1.4; font-size: 0.85rem;">QuickPad is engineered for <strong>total anonymity</strong>. It uses a serverless architecture acting purely as a relay. Your IP address is never shared with other users, meaning you can safely share links with strangers on the internet. Direct messages are encrypted using <strong>Military-Grade RSA-OAEP 2048-bit</strong> cryptography before leaving your device, making it mathematically impossible for anyone (including the database) to read them without your private key. When you set a Vault Password, your notes are encrypted locally with AES-256 before upload. QuickPad operates on an honor system for ephemeral data—everything is built to leave no trace.</p>
+            
+            <p style="font-size: 0.75rem; color: #888; text-align: center; border-top: 1px solid var(--border-color); padding-top: 10px;">Information should be free. Build things that help people.</p>
+        </div>
+    </div>
+
+    <!-- Zen Exit Button -->
+    <button id="zen-exit-btn">❌ Exit Zen Mode</button>
+
+    <!-- Share Modal -->
+    <div id="share-modal" class="modal hidden">
+        <div class="modal-content" style="text-align: left; max-width: 500px; padding: 25px;">
+            <span id="close-share" class="close">&times;</span>
+            <h2 style="color: var(--primary-color); margin-bottom: 15px; font-size: 1.5rem;">Share QuickPad</h2>
+            <p style="margin-bottom: 10px; font-size: 0.9rem;">Copy the appropriate link below. Note: The encryption key is built right into the URL, so anyone with these links can read the document.</p>
+            
+            <div style="margin-bottom: 20px;">
+                <label style="font-weight: bold; color: #fff; display: block; margin-bottom: 5px;">Editor Link (Full Access)</label>
+                <div style="display: flex; gap: 5px;">
+                    <input type="text" id="share-edit-link" readonly style="flex: 1; padding: 10px; background: rgba(0,255,249,0.1); border: 1px solid var(--primary-color); color: var(--primary-color); font-family: monospace;">
+                    <button id="copy-edit-link" class="btn" style="padding: 10px;">📋</button>
+                </div>
+            </div>
+
+            <div>
+                <label style="font-weight: bold; color: #ffb000; display: block; margin-bottom: 5px;">Read-Only Link (View Only)</label>
+                <div style="display: flex; gap: 5px;">
+                    <input type="text" id="share-view-link" readonly style="flex: 1; padding: 10px; background: rgba(255,176,0,0.1); border: 1px solid #ffb000; color: #ffb000; font-family: monospace;">
+                    <button id="copy-view-link" class="btn" style="padding: 10px;">📋</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Merge Conflict Modal -->
+    <div id="merge-modal" class="modal hidden">
+        <div class="modal-content" style="max-width: 900px; width: 95%; max-height: 90vh; overflow-y: auto; position: relative; padding: 25px;">
+            <span id="close-merge" class="close" style="position: absolute; top: 15px; right: 20px;">&times;</span>
+            <h2 class="glitch-text" data-text="Conflict Detected" style="font-size: 2rem; margin-bottom: 10px; color: #ff003c;">Conflict Detected</h2>
+            <p style="margin-bottom: 20px; color: #a0aec0; font-family: monospace;">While you were offline, someone else modified this tab. Merge your changes below to prevent data loss.</p>
+            
+            <div class="merge-columns">
+                <div class="merge-col">
+                    <h3 style="color: #00ff00; font-family: monospace; margin-bottom: 10px;">Server Version</h3>
+                    <textarea id="merge-server-text" readonly style="width: 100%; height: 200px; background: rgba(0,255,0,0.05); border: 1px solid #00ff00; color: #00ff00; padding: 10px; font-family: monospace; resize: none;"></textarea>
+                </div>
+                <div class="merge-col">
+                    <h3 style="color: var(--primary-color); font-family: monospace; margin-bottom: 10px;">Your Offline Version</h3>
+                    <textarea id="merge-local-text" readonly style="width: 100%; height: 200px; background: rgba(0,255,249,0.05); border: 1px solid var(--primary-color); color: var(--primary-color); padding: 10px; font-family: monospace; resize: none;"></textarea>
+                </div>
+            </div>
+
+            <h3 style="color: #fff; font-family: monospace; margin: 20px 0 10px 0;">Final Result (Edit Below)</h3>
+            <textarea id="merge-final-text" style="width: 100%; height: 150px; background: rgba(255,255,255,0.05); border: 1px solid #fff; color: #fff; padding: 10px; font-family: monospace; resize: none; margin-bottom: 20px;"></textarea>
+            
+            <button id="btn-merge-approve" class="btn" style="width: 100%; font-size: 1.2rem; padding: 15px; background: var(--primary-color); color: #000; border: none;">Approve & Overwrite Server</button>
+        </div>
+    </div>
+
+    <script type="module" src="app.js?v=15"></script>
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('./sw.js')
+                    .then(registration => console.log('SW registered!'))
+                    .catch(err => console.log('SW registration failed:', err));
+            });
+        }
+    </script>
+</body>
+</html>
