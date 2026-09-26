@@ -2547,6 +2547,18 @@ body.spotlight-active #workspace-main::before {
 }
 
 /* --- 5. Typewriter Scroll & Focus Dimming --- */
+@property --focus-top {
+    syntax: '<length>';
+    inherits: true;
+    initial-value: 24px;
+}
+
+@property --focus-height {
+    syntax: '<length>';
+    inherits: true;
+    initial-value: 36px;
+}
+
 body.typewriter-mode #editor {
     padding-bottom: 55vh !important;
 }
@@ -2570,7 +2582,7 @@ body.focus-mode #editor {
         rgba(0, 0, 0, 0.22) calc(var(--focus-top, 24px) + var(--focus-height, 36px) + 16px),
         rgba(0, 0, 0, 0.22) 100%
     );
-    transition: -webkit-mask-image 0.12s ease-out, mask-image 0.12s ease-out;
+    transition: --focus-top 0.12s ease-out, --focus-height 0.12s ease-out;
 }
 
 .focus-line-indicator {
@@ -2582,7 +2594,7 @@ body.focus-mode #editor {
     border-radius: 4px;
     pointer-events: none;
     opacity: 0;
-    transition: top 0.12s ease-out, height 0.12s ease-out, opacity 0.2s ease;
+    transition: top 0.12s ease-out, height 0.12s ease-out, left 0.12s ease-out, opacity 0.2s ease;
     z-index: 5;
 }
 

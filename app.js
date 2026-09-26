@@ -206,6 +206,7 @@
     // --- v3.0 Power Suite Elements ---
     const typewriterToggleBtn = document.getElementById('typewriter-toggle-btn');
     const focusToggleBtn = document.getElementById('focus-toggle-btn');
+    const focusLineIndicator = document.getElementById('focus-line-indicator');
     const spotlightToggleBtn = document.getElementById('spotlight-toggle-btn');
     const codeRunnerToggleBtn = document.getElementById('code-runner-toggle-btn');
     const hudLaserBtn = document.getElementById('hud-laser-btn');
@@ -2151,6 +2152,7 @@ document.getElementById("pass").onkeydown=(e)=>{if(e.key==="Enter")unlock();};
         isTyping = false;
         updateHUD();
         if (editor && !isDrawTab) editor.focus();
+        if (isFocusMode) scheduleFocusDimmingUpdate();
         if (!skipSave) saveWorkspace();
     }
 
@@ -2432,6 +2434,7 @@ document.getElementById("pass").onkeydown=(e)=>{if(e.key==="Enter")unlock();};
             updateTaskProgress();
             if (isMarkdown || isSplitMode) updatePreview();
             syncMyCursor();
+            if (isFocusMode) scheduleFocusDimmingUpdate();
             clearTimeout(debounceTimeout);
             debounceTimeout = setTimeout(saveWorkspace, 400);
         });
@@ -2464,6 +2467,7 @@ document.getElementById("pass").onkeydown=(e)=>{if(e.key==="Enter")unlock();};
                 updateHUD();
                 if (isMarkdown || isSplitMode) updatePreview();
                 syncMyCursor();
+                if (isFocusMode) scheduleFocusDimmingUpdate();
             }
         });
 
@@ -2496,6 +2500,7 @@ document.getElementById("pass").onkeydown=(e)=>{if(e.key==="Enter")unlock();};
         editor.addEventListener('keyup', (e) => {
             if (isBurnMode) return;
             syncMyCursor();
+            if (isFocusMode) scheduleFocusDimmingUpdate();
             if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
                 clearTimeout(debounceTimeout);
                 debounceTimeout = setTimeout(saveWorkspace, 500);
@@ -2505,6 +2510,7 @@ document.getElementById("pass").onkeydown=(e)=>{if(e.key==="Enter")unlock();};
         editor.addEventListener('click', () => {
             if (isBurnMode) return;
             syncMyCursor();
+            if (isFocusMode) scheduleFocusDimmingUpdate();
             saveWorkspace();
         });
 
@@ -2514,12 +2520,14 @@ document.getElementById("pass").onkeydown=(e)=>{if(e.key==="Enter")unlock();};
                     renderPeerCursor(cid, peerCursorsData[cid].pos, peerCursorsData[cid].name);
                 }
             }
+            if (isFocusMode) scheduleFocusDimmingUpdate();
         });
     }
 
     document.addEventListener('selectionchange', () => {
         if (document.activeElement === editor && !isBurnMode) {
             syncMyCursor();
+            if (isFocusMode) scheduleFocusDimmingUpdate();
         }
     });
 
@@ -2529,6 +2537,7 @@ document.getElementById("pass").onkeydown=(e)=>{if(e.key==="Enter")unlock();};
                 renderPeerCursor(cid, peerCursorsData[cid].pos, peerCursorsData[cid].name);
             }
         }
+        if (isFocusMode) scheduleFocusDimmingUpdate();
     });
 
     // --- Markdown & Split View Toggles ---
@@ -2648,6 +2657,59 @@ document.getElementById("pass").onkeydown=(e)=>{if(e.key==="Enter")unlock();};
                 showToast("Failed to create burn link.", 'error');
             }
         });
+    }
+
+    // --- Instant Burn Workspace Right Away ---
+    async function instantBurnWorkspace() {
+        if (!currentToken || isBurnMode || isReadOnly) return;
+
+        const confirmed = await showCustomConfirm(
+            "💥 Burn Workspace Right Away?",
+            "This will immediately and permanently erase all notes, tabs, whiteboards, chat, and cryptographic keys from the server. All collaborators will instantly lose access. This cannot be undone."
+        );
+        if (!confirmed) return;
+
+        showToast("🔥 Shredding workspace data...", "warning", 2000);
+
+        try {
+            if (db && currentToken) {
+                // Overwrite document with wiped state (no merge) so all ciphertext is eradicated
+                await db.collection("workspaces").doc(currentToken).set({
+                    burned: true,
+                    burned_at: Date.now(),
+                    tabs: {},
+                    cursors: {},
+                    dms: {},
+                    polls: {},
+                    wormhole: null
+                });
+            }
+
+            // Clear local storage and active tab cache
+            try {
+                localStorage.removeItem(`qp_cached_${currentToken}`);
+                localStorage.removeItem(`qp_active_tab_${currentToken}`);
+            } catch (e) {}
+
+            // Reset URL hash to origin so refreshing does not reload a dead token
+            window.history.replaceState({}, '', window.location.origin + window.location.pathname);
+
+            // Render Zero-Trace screen immediately
+            document.body.innerHTML = `
+                <div style='height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#050811;color:#fff;'>
+                    <div class='splash-badge' style='margin-bottom:15px;color:#ff0055;border-color:rgba(255,0,85,0.4);'>ZERO-TRACE ACTIVE</div>
+                    <h1 class='glitch-text' data-text='WORKSPACE BURNED' style='color:#ff0055;text-shadow:0 0 24px rgba(255,0,85,0.6);margin-bottom:20px;'>WORKSPACE BURNED</h1>
+                    <p style='color:#94a3b8;font-family:monospace;margin-bottom:30px;max-width:400px;text-align:center;'>This workspace has been permanently eradicated. All ciphertext, tabs, and keys were shredded from the server.</p>
+                    <button onclick="window.location.href=window.location.origin+window.location.pathname" class="btn primary-action" style="font-size:1.05rem;padding:12px 28px;border-radius:10px;">Create New Pad</button>
+                </div>`;
+        } catch (err) {
+            console.error("Instant burn error:", err);
+            showToast("Failed to burn workspace.", "error");
+        }
+    }
+
+    if (instantBurnBtn) {
+        instantBurnBtn.addEventListener('click', instantBurnWorkspace);
     }
 
     async function fetchBurnNote(tokenKey) {
@@ -3747,13 +3809,109 @@ document.getElementById("pass").onkeydown=(e)=>{if(e.key==="Enter")unlock();};
         }
     }
 
+    let focusDimmingRaf = null;
+    function scheduleFocusDimmingUpdate() {
+        if (!isFocusMode) return;
+        if (focusDimmingRaf) cancelAnimationFrame(focusDimmingRaf);
+        focusDimmingRaf = requestAnimationFrame(updateFocusDimming);
+    }
+
+    function getParagraphBounds() {
+        if (!editor || !editorMirror) return { top: 24, height: 32, paddingLeft: 36 };
+        const val = editor.value || '';
+        const selStart = Math.min(editor.selectionStart || 0, editor.selectionEnd || 0);
+        const selEnd = Math.max(editor.selectionStart || 0, editor.selectionEnd || 0);
+
+        // Find current paragraph / line boundaries
+        const prevNewline = val.lastIndexOf('\n', Math.max(0, selStart - 1));
+        const paraStart = prevNewline === -1 ? 0 : prevNewline + 1;
+        const nextNewline = val.indexOf('\n', selEnd);
+        const paraEnd = nextNewline === -1 ? val.length : nextNewline;
+
+        // Replication of editor styling to mirror
+        const style = window.getComputedStyle(editor);
+        editorMirror.style.fontFamily = style.fontFamily;
+        editorMirror.style.fontSize = style.fontSize;
+        editorMirror.style.fontWeight = style.fontWeight;
+        editorMirror.style.lineHeight = style.lineHeight;
+        editorMirror.style.letterSpacing = style.letterSpacing;
+        editorMirror.style.wordSpacing = style.wordSpacing;
+        editorMirror.style.tabSize = style.tabSize;
+        editorMirror.style.paddingTop = style.paddingTop;
+        editorMirror.style.paddingRight = style.paddingRight;
+        editorMirror.style.paddingBottom = style.paddingBottom;
+        editorMirror.style.paddingLeft = style.paddingLeft;
+        editorMirror.style.borderTopWidth = style.borderTopWidth;
+        editorMirror.style.borderRightWidth = style.borderRightWidth;
+        editorMirror.style.borderBottomWidth = style.borderBottomWidth;
+        editorMirror.style.borderLeftWidth = style.borderLeftWidth;
+        editorMirror.style.width = style.width;
+        editorMirror.style.boxSizing = style.boxSizing;
+        editorMirror.style.whiteSpace = 'pre-wrap';
+        editorMirror.style.wordWrap = 'break-word';
+        editorMirror.style.overflowWrap = 'break-word';
+
+        editorMirror.innerHTML = '';
+
+        const textBefore = val.substring(0, paraStart);
+        if (textBefore) {
+            editorMirror.appendChild(document.createTextNode(textBefore));
+        }
+
+        const startMarker = document.createElement('span');
+        const startChar = val.charAt(paraStart);
+        startMarker.textContent = (startChar && startChar !== '\n') ? startChar : '\u200B';
+        editorMirror.appendChild(startMarker);
+
+        const endMarker = document.createElement('span');
+        if (paraEnd > paraStart + 1) {
+            const middle = val.substring(paraStart + 1, paraEnd - 1);
+            if (middle) editorMirror.appendChild(document.createTextNode(middle));
+            const endChar = val.charAt(paraEnd - 1);
+            endMarker.textContent = (endChar && endChar !== '\n') ? endChar : '\u200B';
+            editorMirror.appendChild(endMarker);
+        } else {
+            endMarker.textContent = '\u200B';
+            editorMirror.appendChild(endMarker);
+        }
+
+        const lineHeight = parseFloat(style.lineHeight) || (parseFloat(style.fontSize) * 1.7) || 28;
+        const top = startMarker.offsetTop - editor.scrollTop;
+        const endTop = (paraEnd > paraStart + 1) ? (endMarker.offsetTop - editor.scrollTop) : top;
+        const height = Math.max(lineHeight, (endTop - top) + lineHeight);
+
+        return { top, height, paddingLeft: parseFloat(style.paddingLeft) || 36 };
+    }
+
+    function updateFocusDimming() {
+        if (!isFocusMode || !editor || editor.style.display === 'none') {
+            if (focusLineIndicator) focusLineIndicator.style.opacity = '0';
+            return;
+        }
+        const { top, height, paddingLeft } = getParagraphBounds();
+
+        editor.style.setProperty('--focus-top', `${top}px`);
+        editor.style.setProperty('--focus-height', `${height}px`);
+
+        if (focusLineIndicator) {
+            focusLineIndicator.style.opacity = '1';
+            focusLineIndicator.style.top = `${top}px`;
+            focusLineIndicator.style.height = `${height}px`;
+            focusLineIndicator.style.left = `${Math.max(8, paddingLeft - 18)}px`;
+        }
+    }
+
     function toggleFocusMode() {
         isFocusMode = !isFocusMode;
         document.body.classList.toggle('focus-mode', isFocusMode);
         if (focusToggleBtn) focusToggleBtn.classList.toggle('active', isFocusMode);
         if (isFocusMode) {
+            updateFocusDimming();
             showToast("🎯 Focus Dimming Active", 'info');
         } else {
+            editor.style.removeProperty('--focus-top');
+            editor.style.removeProperty('--focus-height');
+            if (focusLineIndicator) focusLineIndicator.style.opacity = '0';
             showToast("Focus Dimming off", 'info');
         }
     }
@@ -4772,7 +4930,8 @@ document.getElementById("pass").onkeydown=(e)=>{if(e.key==="Enter")unlock();};
         { name: "Export Encrypted HTML (.html)", shortcut: "Vault", action: () => exportHtmlBtn && exportHtmlBtn.click() },
         { name: "Copy Document to Clipboard", shortcut: "⌘C", action: () => copyBtn && copyBtn.click() },
         { name: "Create New Workspace", shortcut: "New", action: () => newBtn && newBtn.click() },
-        { name: "Create Burn Note (Self-Destruct)", shortcut: "Burn", action: () => burnBtn && burnBtn.click() }
+        { name: "Create Burn Note (Self-Destruct)", shortcut: "Burn", action: () => burnBtn && burnBtn.click() },
+        { name: "💥 Burn Note Right Away", shortcut: "Burn Now", action: () => instantBurnWorkspace() }
     ];
 
     function renderCmdResults(filterText = "") {
