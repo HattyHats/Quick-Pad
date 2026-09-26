@@ -45,6 +45,7 @@
     const splitToggleBtn = document.getElementById('split-toggle-btn');
     const copyBtn = document.getElementById('copy-btn');
     const burnBtn = document.getElementById('burn-btn');
+    const instantBurnBtn = document.getElementById('instant-burn-btn');
     const newBtn = document.getElementById('new-btn');
     const timerBtn = document.getElementById('timer-btn');
     const qrBtn = document.getElementById('qr-btn');
@@ -309,6 +310,7 @@
     let incomingFileBuffer = [];
     let incomingFileMeta = null;
     let incomingReceivedBytes = 0;
+    let lastProcessedWormholeTimestamp = 0;
     let slashFilteredTemplates = [];
     let slashSelectedIndex = 0;
     let slashActive = false;
@@ -1620,6 +1622,7 @@ document.getElementById("pass").onkeydown=(e)=>{if(e.key==="Enter")unlock();};
             isBurnMode = true;
             if (mdToggleBtn) mdToggleBtn.style.display = 'none';
             if (burnBtn) burnBtn.style.display = 'none';
+            if (instantBurnBtn) instantBurnBtn.style.display = 'none';
             if (tabsBar) tabsBar.style.display = 'none';
             if (liveHud) liveHud.style.display = 'none';
             if (editor) editor.readOnly = true;
@@ -1639,6 +1642,7 @@ document.getElementById("pass").onkeydown=(e)=>{if(e.key==="Enter")unlock();};
                 if (newBtn) newBtn.style.display = 'none';
                 if (timerBtn) timerBtn.style.display = 'none';
                 if (burnBtn) burnBtn.style.display = 'none';
+                if (instantBurnBtn) instantBurnBtn.style.display = 'none';
             } else if (padParam) {
                 rawToken = padParam;
                 window.history.replaceState({}, '', `#${rawToken}`);
@@ -1899,7 +1903,8 @@ document.getElementById("pass").onkeydown=(e)=>{if(e.key==="Enter")unlock();};
                         }
 
                         // v3.0 WebRTC Wormhole Signal Handling
-                        if (data.wormhole && data.wormhole.to === myDeviceId && data.wormhole.timestamp && (Date.now() - data.wormhole.timestamp < 30000)) {
+                        if (data.wormhole && data.wormhole.to === myDeviceId && data.wormhole.timestamp && data.wormhole.timestamp > lastProcessedWormholeTimestamp && (Date.now() - data.wormhole.timestamp < 60000)) {
+                            lastProcessedWormholeTimestamp = data.wormhole.timestamp;
                             handleIncomingWormholeSignal(data.wormhole);
                         }
 
@@ -4329,13 +4334,24 @@ document.getElementById("pass").onkeydown=(e)=>{if(e.key==="Enter")unlock();};
     // =========================================================================
     // 6. WEBRTC P2P WORMHOLE FILE BEAM ENGINE (DIRECT DATACHANNEL)
     // =========================================================================
+    const rtcConfig = {
+        iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' },
+            { urls: 'stun:stun2.l.google.com:19302' }
+        ]
+    };
+
     function initWormhole() {
-        if (wormholeOpenBtn) wormholeOpenBtn.addEventListener('click', () => {
-            if (wormholeModal) {
-                wormholeModal.classList.remove('hidden');
-                updateWormholePeersUI();
-            }
-        });
+        if (wormholeOpenBtn) {
+            wormholeOpenBtn.addEventListener('click', () => {
+                if (wormholeModal) {
+                    wormholeModal.classList.remove('hidden');
+                    updateWormholePeersUI();
+                    checkWormholeReady();
+                }
+            });
+        }
         if (closeWormhole) closeWormhole.addEventListener('click', () => wormholeModal && wormholeModal.classList.add('hidden'));
 
         if (wormholeFileInput) {
@@ -4347,7 +4363,9 @@ document.getElementById("pass").onkeydown=(e)=>{if(e.key==="Enter")unlock();};
         }
 
         if (wormholeSendBtn) {
-            wormholeSendBtn.addEventListener('click', startWormholeTransfer);
+            wormholeSendBtn.addEventListener('click', () => {
+                startWormholeTransfer();
+            });
         }
 
         if (wormholeDropzone) {
@@ -4388,34 +4406,71 @@ document.getElementById("pass").onkeydown=(e)=>{if(e.key==="Enter")unlock();};
     }
 
     function formatFileSize(bytes) {
+        if (!bytes || isNaN(bytes)) return '0 B';
         if (bytes < 1024) return bytes + ' B';
         if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
         return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
     }
 
     function checkWormholeReady() {
-        if (wormholeSendBtn) {
-            wormholeSendBtn.disabled = !(selectedWormholePeer && selectedWormholeFile);
+        if (!wormholeSendBtn) return;
+        
+        let otherPeerCount = 0;
+        currentActiveUsers.forEach((user, cid) => {
+            if (cid !== myDeviceId) otherPeerCount++;
+        });
+
+        if (selectedWormholePeer && selectedWormholeFile) {
+            const peer = currentActiveUsers.get(selectedWormholePeer) || { name: 'Collaborator' };
+            wormholeSendBtn.disabled = false;
+            wormholeSendBtn.classList.add('ready-pulse');
+            wormholeSendBtn.innerText = `⚡ Beam "${selectedWormholeFile.name}" to ${peer.name}`;
+        } else if (!selectedWormholeFile) {
+            wormholeSendBtn.disabled = false;
+            wormholeSendBtn.classList.remove('ready-pulse');
+            wormholeSendBtn.innerText = "⚡ Choose a File to Beam";
+        } else if (otherPeerCount === 0) {
+            wormholeSendBtn.disabled = false;
+            wormholeSendBtn.classList.remove('ready-pulse');
+            wormholeSendBtn.innerText = "⚡ Waiting for Collaborator to Join...";
+        } else {
+            wormholeSendBtn.disabled = false;
+            wormholeSendBtn.classList.remove('ready-pulse');
+            wormholeSendBtn.innerText = "⚡ Select a Collaborator Above";
         }
     }
 
     function updateWormholePeersUI() {
         if (!wormholePeersList) return;
         wormholePeersList.innerHTML = '';
-        let peerCount = 0;
+        const otherPeerIds = [];
 
         currentActiveUsers.forEach((user, cid) => {
-            if (cid === myDeviceId) return;
-            peerCount++;
+            if (cid !== myDeviceId) otherPeerIds.push(cid);
+        });
+
+        // Automatically select collaborator if only 1 is present, or if none is currently selected
+        if (otherPeerIds.length > 0 && (!selectedWormholePeer || !currentActiveUsers.has(selectedWormholePeer))) {
+            selectedWormholePeer = otherPeerIds[0];
+        }
+
+        otherPeerIds.forEach((cid) => {
+            const user = currentActiveUsers.get(cid) || { name: 'Collaborator' };
+            const isSelected = selectedWormholePeer === cid;
             const item = document.createElement('div');
-            item.className = `wormhole-peer-item ${selectedWormholePeer === cid ? 'selected' : ''}`;
+            item.className = `wormhole-peer-item ${isSelected ? 'selected' : ''}`;
             const colorObj = getPeerColor(cid);
+            
+            const badgeHtml = isSelected
+                ? '<span class="wormhole-peer-check">✓ Selected</span>'
+                : '<span class="wormhole-peer-select-btn">Click to select</span>';
+
             item.innerHTML = `
                 <div class="wormhole-peer-info">
-                    <span class="wormhole-peer-avatar" style="border:1px solid ${colorObj.color}">${user.avatar && !user.avatar.startsWith('http') && !user.avatar.startsWith('data:') ? user.avatar : '👤'}</span>
+                    <span class="wormhole-peer-avatar" style="border:1.5px solid ${colorObj.color}">${user.avatar && !user.avatar.startsWith('http') && !user.avatar.startsWith('data:') ? user.avatar : '👤'}</span>
                     <span style="font-weight:600;color:${colorObj.color}">${escapeHtml(user.name)}</span>
                 </div>
-                <span style="font-size:0.75rem;color:var(--text-muted);font-family:monospace;">🟢 Online</span>
+                ${badgeHtml}
             `;
             item.addEventListener('click', () => {
                 selectedWormholePeer = cid;
@@ -4425,48 +4480,105 @@ document.getElementById("pass").onkeydown=(e)=>{if(e.key==="Enter")unlock();};
             wormholePeersList.appendChild(item);
         });
 
-        if (peerCount === 0) {
-            wormholePeersList.innerHTML = '<div class="wormhole-empty-peers">No other collaborators currently in workspace. Share your link to beam files!</div>';
+        if (otherPeerIds.length === 0) {
+            selectedWormholePeer = null;
+            wormholePeersList.innerHTML = '<div class="wormhole-empty-peers">No other collaborators currently in workspace. Share your link with a peer first!</div>';
         }
+
+        checkWormholeReady();
     }
 
     async function startWormholeTransfer() {
-        if (!selectedWormholePeer || !selectedWormholeFile || !db || !currentToken) return;
+        if (!selectedWormholeFile) {
+            showToast("Please choose a file to beam first", 'info');
+            if (wormholeFileInput) wormholeFileInput.click();
+            return;
+        }
+
+        let otherPeerCount = 0;
+        currentActiveUsers.forEach((user, cid) => {
+            if (cid !== myDeviceId) otherPeerCount++;
+        });
+
+        if (otherPeerCount === 0) {
+            showToast("No other collaborators in workspace. Share your link to beam files!", 'warning');
+            return;
+        }
+
+        if (!selectedWormholePeer || !currentActiveUsers.has(selectedWormholePeer)) {
+            showToast("Please select a collaborator in the list above to beam to", 'info');
+            return;
+        }
+
+        if (!db || !currentToken) {
+            showToast("Workspace connection offline", 'error');
+            return;
+        }
+
         if (wormholeProgressContainer) wormholeProgressContainer.classList.remove('hidden');
-        if (wormholeStatusText) wormholeStatusText.innerText = "Negotiating P2P WebRTC handshake...";
+        if (wormholeStatusText) wormholeStatusText.innerText = "Gathering P2P routes...";
         if (wormholeSendBtn) wormholeSendBtn.disabled = true;
 
         try {
-            wormholePeerConn = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+            if (wormholePeerConn) {
+                try { wormholePeerConn.close(); } catch(e) {}
+            }
+
+            wormholePeerConn = new RTCPeerConnection(rtcConfig);
             wormholeDataChannel = wormholePeerConn.createDataChannel('fileTransfer', { ordered: true });
+            wormholeDataChannel.binaryType = 'arraybuffer';
 
             wormholeDataChannel.onopen = () => {
-                if (wormholeStatusText) wormholeStatusText.innerText = `Beaming ${selectedWormholeFile.name}...`;
+                if (wormholeStatusText) wormholeStatusText.innerText = `Connected! Beaming ${selectedWormholeFile.name}...`;
                 sendFileChunks(selectedWormholeFile, wormholeDataChannel);
             };
 
-            wormholePeerConn.onicecandidate = (e) => {
-                if (e.candidate) {
-                    sendWormholeSignal({ type: 'candidate', candidate: e.candidate, to: selectedWormholePeer });
-                }
+            wormholeDataChannel.onerror = (err) => {
+                console.error("Wormhole DataChannel error:", err);
+                showToast("P2P DataChannel connection error", 'error');
+                if (wormholeSendBtn) wormholeSendBtn.disabled = false;
             };
 
             const offer = await wormholePeerConn.createOffer();
             await wormholePeerConn.setLocalDescription(offer);
 
-            sendWormholeSignal({
+            // Wait for ICE gathering to complete so all candidates are cleanly embedded in the SDP
+            await new Promise((resolve) => {
+                if (wormholePeerConn.iceGatheringState === 'complete') {
+                    resolve();
+                } else {
+                    const check = () => {
+                        if (wormholePeerConn.iceGatheringState === 'complete') {
+                            wormholePeerConn.removeEventListener('icegatheringstatechange', check);
+                            resolve();
+                        }
+                    };
+                    wormholePeerConn.addEventListener('icegatheringstatechange', check);
+                    setTimeout(resolve, 2000);
+                }
+            });
+
+            // Send pure JSON payload so Firestore never throws serialization errors
+            await sendWormholeSignal({
                 type: 'offer',
-                sdp: offer,
+                sdp: {
+                    type: wormholePeerConn.localDescription.type,
+                    sdp: wormholePeerConn.localDescription.sdp
+                },
                 to: selectedWormholePeer,
                 fileMeta: {
                     name: selectedWormholeFile.name,
                     size: selectedWormholeFile.size,
-                    type: selectedWormholeFile.type
+                    type: selectedWormholeFile.type || 'application/octet-stream'
                 }
             });
+
+            if (wormholeStatusText) wormholeStatusText.innerText = "Beam invite sent! Waiting for peer acceptance...";
         } catch(err) {
+            console.error("Wormhole handshake error:", err);
             showToast("Failed to initiate P2P Wormhole", 'error');
             if (wormholeStatusText) wormholeStatusText.innerText = "Connection error";
+            if (wormholeSendBtn) wormholeSendBtn.disabled = false;
         }
     }
 
@@ -4476,6 +4588,17 @@ document.getElementById("pass").onkeydown=(e)=>{if(e.key==="Enter")unlock();};
         sigObj.timestamp = Date.now();
         try {
             await db.collection("workspaces").doc(currentToken).update({ wormhole: sigObj });
+        } catch(e) {
+            console.warn("Wormhole signal write warning:", e);
+        }
+    }
+
+    async function clearWormholeSignal() {
+        if (!db || !currentToken) return;
+        try {
+            await db.collection("workspaces").doc(currentToken).update({
+                wormhole: firebase.firestore.FieldValue.delete()
+            });
         } catch(e) {}
     }
 
@@ -4484,8 +4607,15 @@ document.getElementById("pass").onkeydown=(e)=>{if(e.key==="Enter")unlock();};
 
         if (sig.type === 'offer') {
             const senderUser = currentActiveUsers.get(sig.from) || { name: 'Collaborator' };
-            const accept = confirm(`⚡ P2P Wormhole File Beam:\n\n${senderUser.name} wants to beam you:\n"${sig.fileMeta.name}" (${formatFileSize(sig.fileMeta.size)})\n\nAccept incoming transfer?`);
-            if (!accept) return;
+            const accept = await showCustomConfirm(
+                "⚡ P2P Wormhole File Beam",
+                `${senderUser.name} wants to beam you file:\n\n"${sig.fileMeta.name}" (${formatFileSize(sig.fileMeta.size)})\n\nAccept direct P2P transfer?`
+            );
+
+            if (!accept) {
+                await sendWormholeSignal({ type: 'reject', to: sig.from });
+                return;
+            }
 
             incomingFileMeta = sig.fileMeta;
             incomingFileBuffer = [];
@@ -4493,18 +4623,25 @@ document.getElementById("pass").onkeydown=(e)=>{if(e.key==="Enter")unlock();};
 
             if (wormholeModal) wormholeModal.classList.remove('hidden');
             if (wormholeProgressContainer) wormholeProgressContainer.classList.remove('hidden');
-            if (wormholeStatusText) wormholeStatusText.innerText = `Receiving ${sig.fileMeta.name}...`;
+            if (wormholeStatusText) wormholeStatusText.innerText = `Connecting P2P channel for ${sig.fileMeta.name}...`;
+            if (wormholeProgressFill) wormholeProgressFill.style.width = '0%';
+            if (wormholePercentage) wormholePercentage.innerText = '0%';
 
-            wormholePeerConn = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+            if (wormholePeerConn) {
+                try { wormholePeerConn.close(); } catch(e) {}
+            }
+
+            wormholePeerConn = new RTCPeerConnection(rtcConfig);
+            const startTime = Date.now();
+
             wormholePeerConn.ondatachannel = (e) => {
                 const channel = e.channel;
                 channel.binaryType = 'arraybuffer';
-                const startTime = Date.now();
 
                 channel.onmessage = (msgEvent) => {
                     incomingFileBuffer.push(msgEvent.data);
                     incomingReceivedBytes += msgEvent.data.byteLength;
-                    const pct = Math.round((incomingReceivedBytes / incomingFileMeta.size) * 100);
+                    const pct = Math.min(100, Math.round((incomingReceivedBytes / incomingFileMeta.size) * 100));
 
                     if (wormholeProgressFill) wormholeProgressFill.style.width = `${pct}%`;
                     if (wormholePercentage) wormholePercentage.innerText = `${pct}%`;
@@ -4519,36 +4656,62 @@ document.getElementById("pass").onkeydown=(e)=>{if(e.key==="Enter")unlock();};
                         const dl = document.createElement('a');
                         dl.href = URL.createObjectURL(blob);
                         dl.download = incomingFileMeta.name;
+                        document.body.appendChild(dl);
                         dl.click();
-                        showToast(`⚡ File received: ${incomingFileMeta.name}`, 'success');
+                        setTimeout(() => { dl.remove(); URL.revokeObjectURL(dl.href); }, 1000);
+                        showToast(`⚡ File beamed successfully: ${incomingFileMeta.name}`, 'success');
+                        clearWormholeSignal();
                     }
                 };
-            };
-
-            wormholePeerConn.onicecandidate = (e) => {
-                if (e.candidate) {
-                    sendWormholeSignal({ type: 'candidate', candidate: e.candidate, to: sig.from });
-                }
             };
 
             await wormholePeerConn.setRemoteDescription(new RTCSessionDescription(sig.sdp));
             const answer = await wormholePeerConn.createAnswer();
             await wormholePeerConn.setLocalDescription(answer);
 
-            sendWormholeSignal({ type: 'answer', sdp: answer, to: sig.from });
+            // Wait for answer ICE gathering
+            await new Promise((resolve) => {
+                if (wormholePeerConn.iceGatheringState === 'complete') {
+                    resolve();
+                } else {
+                    const check = () => {
+                        if (wormholePeerConn.iceGatheringState === 'complete') {
+                            wormholePeerConn.removeEventListener('icegatheringstatechange', check);
+                            resolve();
+                        }
+                    };
+                    wormholePeerConn.addEventListener('icegatheringstatechange', check);
+                    setTimeout(resolve, 2000);
+                }
+            });
+
+            await sendWormholeSignal({
+                type: 'answer',
+                sdp: {
+                    type: wormholePeerConn.localDescription.type,
+                    sdp: wormholePeerConn.localDescription.sdp
+                },
+                to: sig.from
+            });
         } else if (sig.type === 'answer' && wormholePeerConn) {
-            await wormholePeerConn.setRemoteDescription(new RTCSessionDescription(sig.sdp));
-        } else if (sig.type === 'candidate' && wormholePeerConn) {
-            try { await wormholePeerConn.addIceCandidate(new RTCIceCandidate(sig.candidate)); } catch(e) {}
+            if (wormholePeerConn.signalingState !== 'stable') {
+                await wormholePeerConn.setRemoteDescription(new RTCSessionDescription(sig.sdp));
+            }
+        } else if (sig.type === 'reject') {
+            showToast("Collaborator declined the file beam.", 'info');
+            if (wormholeStatusText) wormholeStatusText.innerText = "Beam declined by collaborator";
+            if (wormholeSendBtn) wormholeSendBtn.disabled = false;
+            clearWormholeSignal();
         }
     }
 
     function sendFileChunks(file, channel) {
-        const CHUNK_SIZE = 64 * 1024;
+        const CHUNK_SIZE = 16 * 1024; // 16 KB standard safe RTCDataChannel frame
         let offset = 0;
         const startTime = Date.now();
 
         function readSlice(o) {
+            if (channel.readyState !== 'open') return;
             const slice = file.slice(o, o + CHUNK_SIZE);
             const reader = new FileReader();
             reader.onload = (e) => {
@@ -4556,7 +4719,7 @@ document.getElementById("pass").onkeydown=(e)=>{if(e.key==="Enter")unlock();};
 
                 channel.send(e.target.result);
                 offset += e.target.result.byteLength;
-                const pct = Math.round((offset / file.size) * 100);
+                const pct = Math.min(100, Math.round((offset / file.size) * 100));
 
                 if (wormholeProgressFill) wormholeProgressFill.style.width = `${pct}%`;
                 if (wormholePercentage) wormholePercentage.innerText = `${pct}%`;
@@ -4566,14 +4729,15 @@ document.getElementById("pass").onkeydown=(e)=>{if(e.key==="Enter")unlock();};
                 if (wormholeSpeedText) wormholeSpeedText.innerText = `${speed} KB/s`;
 
                 if (offset < file.size) {
-                    if (channel.bufferedAmount > 8 * 1024 * 1024) {
-                        setTimeout(() => readSlice(offset), 50);
+                    if (channel.bufferedAmount > 512 * 1024) {
+                        setTimeout(() => readSlice(offset), 20);
                     } else {
                         readSlice(offset);
                     }
                 } else {
                     if (wormholeStatusText) wormholeStatusText.innerText = "File successfully beamed to peer!";
-                    showToast(`⚡ ${file.name} sent successfully!`, 'success');
+                    showToast(`⚡ ${file.name} beamed successfully!`, 'success');
+                    if (wormholeSendBtn) wormholeSendBtn.disabled = false;
                 }
             };
             reader.readAsArrayBuffer(slice);

@@ -19,7 +19,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Inter:wght@300;400;500;600;700&family=Lora:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css?v=32">
+    <link rel="stylesheet" href="style.css?v=33">
     
     <!-- Marked.js for markdown rendering -->
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
@@ -239,8 +239,10 @@
             <div class="btn dropdown-group burn" title="Security & Burn">
                 <span>🔥 Security</span>
                 <div class="dropdown-menu">
+                    <button id="instant-burn-btn" class="menu-action-btn burn" style="color:#ff0055;font-weight:600;">💥 Burn Note Right Away</button>
+                    <div class="menu-divider"></div>
                     <button id="timer-btn" class="menu-action-btn">⏳ Set Self-Destruct Timer</button>
-                    <button id="burn-btn" class="menu-action-btn burn">🔥 Create Burn Note</button>
+                    <button id="burn-btn" class="menu-action-btn burn">🔥 Create Burn Note Link</button>
                     <div class="menu-divider"></div>
                     <button id="duress-btn" class="menu-action-btn">🛡️ Set Duress PIN (Decoy Vault)</button>
                     <button id="panic-btn" class="menu-action-btn">🕶️ Panic Camouflage (Alt+P)</button>
@@ -322,6 +324,7 @@
 
     <!-- Workspace Main Editor, Previews & Whiteboard Canvas -->
     <main id="workspace-main">
+        <div id="focus-line-indicator" class="focus-line-indicator"></div>
         <textarea id="editor" placeholder="Start typing... Everything auto-saves with zero-knowledge AES-256 encryption. (Type / for commands, paste images, or create .draw for whiteboard)" autofocus></textarea>
         <div id="preview" class="markdown-body hidden"></div>
         <div id="editor-mirror"></div>
@@ -816,7 +819,7 @@
                 <div id="wormhole-speed-text" class="wormhole-speed">0 KB/s</div>
             </div>
 
-            <button id="wormhole-send-btn" class="btn primary-action btn-full" style="padding:12px;font-size:1.05rem;" disabled>⚡ Beam File to Peer</button>
+            <button id="wormhole-send-btn" class="btn primary-action btn-full" style="padding:12px;font-size:1.05rem;">⚡ Select a File to Beam</button>
         </div>
     </div>
 
@@ -853,7 +856,7 @@
     <div id="toast-container" class="toast-container"></div>
 
     <!-- Application Script (Standard Script for Universal file:// & HTTPS Compatibility) -->
-    <script src="app.js?v=32"></script>
+    <script src="app.js?v=33"></script>
     <script>
         if ('serviceWorker' in navigator && window.location.protocol.startsWith('http')) {
             window.addEventListener('load', () => {
